@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 5s      # scrape every 5s so incidents are caught fast
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "demo-microservices"
+    static_configs:
+      - targets:
+          - "host.docker.internal:8001"  # payment-service
+          - "host.docker.internal:8002"  # auth-service
+          - "host.docker.internal:8003"  # checkout-service
+    # Remap the 'service' label from the metric itself
+    # so Prometheus knows which service each metric belongs to
+    metric_relabel_configs:
+      - source_labels: [service]
+        target_label: service

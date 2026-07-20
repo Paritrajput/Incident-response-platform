@@ -1,0 +1,9 @@
+fastapi==0.111.0
+uvicorn==0.29.0
+kafka-python==3.0.7
+google-genai==1.16.0
+google-api-core==2.19.0
+python-dotenv==1.0.1
+psycopg2-binary==2.9.9
+httpx
+pydantic==2.7.0
