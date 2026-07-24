@@ -32,6 +32,7 @@ const STEPS = [
 export default function Onboarding() {
   const navigate = useNavigate();
   const apiKey = localStorage.getItem("api_key") || "";
+  console.log("Onboarding.jsx: apiKey:", apiKey);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);

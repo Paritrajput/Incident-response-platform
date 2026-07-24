@@ -4,7 +4,7 @@ import IncidentCard from "../components/IncidentCard.jsx";
 import StatsBar from "../components/StatsBar.jsx";
 import { useTheme } from "../context/ThemeContext.jsx";
 
-const WS_URL = `ws://${window.location.host}/ws`;
+const WS_URL = `ws://localhost:8000/ws`;
 const API = "http://localhost:8000";
 
 export default function Dashboard() {
@@ -32,17 +32,21 @@ export default function Dashboard() {
     };
   }
 
-  async function loadHistory() {
+async function loadHistory() {
     const key = localStorage.getItem("api_key");
     if (!key) return;
     try {
-      const res = await fetch(`${API}/incidents/`, { headers: { "Authorization": `Bearer ${key}` } });
-      if (res.ok) {
-        const data = await res.json();
-        setIncidents((prev) => prev.length === 0 ? [...data.incidents].reverse() : prev);
-      }
+        const res = await fetch(`${API}/incidents/`, {
+            headers: { "Authorization": `Bearer ${key}` },
+        });
+        if (res.ok) {
+            const data = await res.json();
+            setIncidents((prev) =>
+                prev.length === 0 ? [...data.incidents].reverse() : prev
+            );
+        }
     } catch (_) {}
-  }
+}
 
   function logout() {
     localStorage.clear();

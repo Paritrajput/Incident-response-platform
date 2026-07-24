@@ -70,7 +70,6 @@ def init_db():
 # ── User functions ────────────────────────────────────────────────────────────
 
 def create_user(email: str) -> dict:
-    """Create a new user with a random API key. Returns the user row."""
     api_key = secrets.token_urlsafe(32)
     conn = get_conn()
     try:
@@ -81,8 +80,11 @@ def create_user(email: str) -> dict:
                 (email, api_key)
             )
             row = cur.fetchone()
-        conn.commit()
+            conn.commit()  # commit BEFORE put_conn
         return {"id": row[0], "email": row[1], "api_key": row[2], "created_at": row[3]}
+    except Exception:
+        conn.rollback()  # rollback on error
+        raise
     finally:
         put_conn(conn)
 
@@ -123,7 +125,6 @@ def get_user_by_email(email: str) -> dict | None:
 # ── Integration functions ────────────────────────────────────────────────────
 
 def upsert_integration(user_id: int, integration_type: str, config: dict) -> dict:
-    """Save or update an integration config for a user."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -135,11 +136,13 @@ def upsert_integration(user_id: int, integration_type: str, config: dict) -> dic
                 RETURNING id, type, config, enabled
             """, (user_id, integration_type, json.dumps(config)))
             row = cur.fetchone()
-        conn.commit()
+            conn.commit()  # commit BEFORE put_conn
         return {"id": row[0], "type": row[1], "config": row[2], "enabled": row[3]}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         put_conn(conn)
-
 
 def get_integrations(user_id: int) -> list:
     """Get all enabled integrations for a user."""
@@ -181,7 +184,6 @@ def get_all_users_with_integration(integration_type: str) -> list:
 # ── Incident functions ───────────────────────────────────────────────────────
 
 def save_incident(user_id: int, diagnosis_event: dict) -> int:
-    """Persist a diagnosis event to the incidents table."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -202,11 +204,13 @@ def save_incident(user_id: int, diagnosis_event: dict) -> int:
                 diagnosis_event.get("resolution", {}).get("disagreement_score"),
             ))
             incident_id = cur.fetchone()[0]
-        conn.commit()
+            conn.commit()  # commit BEFORE put_conn
         return incident_id
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         put_conn(conn)
-
 
 def get_incidents(user_id: int, limit: int = 20) -> list:
     """Fetch recent incidents for a user."""

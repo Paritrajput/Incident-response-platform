@@ -39,7 +39,7 @@ def _kafka_consumer_thread(loop: asyncio.AbstractEventLoop) -> None:
         bootstrap_servers=KAFKA_BROKER,
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         auto_offset_reset="latest",
-        group_id="orchestrator",
+        group_id="orchestrator-v2",
     )
     log("info", "kafka consumer thread started",
         topics=[TOPIC_INCIDENTS, TOPIC_DEPLOYS])
