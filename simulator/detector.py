@@ -24,7 +24,7 @@ from kafka_utils import make_producer, KAFKA_BROKER, TOPIC_LOGS, TOPIC_METRICS, 
 
 WINDOW_SECONDS = 30   # wider window to catch Prometheus metrics (polls every 15s)
 SLIDE_SECONDS = 5
-ERROR_RATE_THRESHOLD = 0.10
+ERROR_RATE_THRESHOLD = 10
 
 metric_buffers = defaultdict(deque)
 log_buffers = defaultdict(deque)

@@ -78,7 +78,7 @@ async def _call_agent_with_retry(agent_fn, incident: dict) -> dict:
             await asyncio.sleep(2 ** attempt)
 
     return {
-        "agent": agent_fn.__module__,
+        "agent": agent_fn.__module__.split(".")[-1],
         "diagnosis": {
             "root_cause": "Agent unavailable",
             "confidence": "none",
@@ -90,15 +90,23 @@ async def _call_agent_with_retry(agent_fn, incident: dict) -> dict:
 
 
 async def _notify_slack(diagnosis_event: dict):
-    """Send Slack notification to all users with Slack configured."""
+    """Send Slack notification - deduplicated, max one message per incident."""
     slack_users = get_all_users_with_integration("slack")
-    for user in slack_users:
-        config = user["config"]
-        await slack_integration.send_diagnosis(
-            bot_token=config.get("bot_token", ""),
-            channel_id=config.get("channel_id", ""),
-            diagnosis_event=diagnosis_event,
-        )
+    
+    if not slack_users:
+        log("warn", "no slack integration configured")
+        return
+
+    # Only notify the first configured user to avoid duplicates
+    # In multi-tenant: match by user_id from the incident source
+    user = slack_users[0]
+    config = user["config"]
+    
+    await slack_integration.send_diagnosis(
+        bot_token=config.get("bot_token", ""),
+        channel_id=config.get("channel_id", ""),
+        diagnosis_event=diagnosis_event,
+    )
 
 
 async def _save_to_db(diagnosis_event: dict):

@@ -11,7 +11,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 from db import models
-from routers.auth import get_current_user
+# from routers.auth import get_current_user
+from auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -33,7 +34,7 @@ async def connect_slack(config: SlackConfig, user=Depends(get_current_user)):
 # ── Prometheus ───────────────────────────────────────────────────────────────
 
 class PrometheusConfig(BaseModel):
-    prometheus_url: str              # e.g. http://localhost:9090
+    prometheus_url: str             
     error_rate_query: Optional[str] = None   # custom PromQL or use default
     latency_query: Optional[str] = None
 

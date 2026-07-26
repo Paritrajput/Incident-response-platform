@@ -3,8 +3,9 @@ import Landing from "./pages/Landing.jsx";
 import Signup from "./pages/Signup.jsx";
 import Onboarding from "./pages/Onboarding.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import Login from "./pages/Login.jsx";
+import ProtectedRoute from "./components/ProtectedRoute.jsx";
 
-// Simple auth check - if api_key is in localStorage, user is logged in.
 function PrivateRoute({ children }) {
   const apiKey = localStorage.getItem("api_key");
   return apiKey ? children : <Navigate to="/signup" replace />;
@@ -16,12 +17,13 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/signup" element={<Signup />} />
-        <Route path="/onboarding" element={
-          <PrivateRoute><Onboarding /></PrivateRoute>
-        } />
-        <Route path="/dashboard" element={
-          <PrivateRoute><Dashboard /></PrivateRoute>
-        } />
+        <Route path="/login" element={<Login />} />
+         <Route element={<ProtectedRoute />}>
+           <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+         </Route>
+      
+  
       </Routes>
     </BrowserRouter>
   );

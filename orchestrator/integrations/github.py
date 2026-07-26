@@ -46,26 +46,34 @@ async def github_webhook(
 
         print(f"[GITHUB] push event repo={repo} ref={ref} commits={len(commits)}", flush=True)
 
-        if commits:
-            latest = commits[-1]
-            deploy = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "service": repo.split("/")[-1],
-                "deploy_id": latest.get("id", "")[:8],
-                "commit_message": latest.get("message", ""),
-                "branch": ref.replace("refs/heads/", ""),
-                "source": "github",
-            }
-            recent_github_deploys.append(deploy)
-            print(f"[GITHUB] deploy recorded: {deploy}", flush=True)
+    if commits:
+        latest = commits[-1]
+        deploy = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "service": repo.split("/")[-1],
+            "deploy_id": latest.get("id", "")[:8],
+            "commit_message": latest.get("message", ""),
+            "branch": ref.replace("refs/heads/", ""),
+            "source": "github",
+        }
+        recent_github_deploys.append(deploy)
+        print(f"[GITHUB] deploy recorded: {deploy}", flush=True)
 
-            # Feed into deploy correlator cache
-            try:
-                from agents import deploy_correlator
-                deploy_correlator.record_deploy(deploy)
-                print(f"[GITHUB] deploy added to correlator cache", flush=True)
-            except Exception as e:
-                print(f"[GITHUB] correlator import failed: {e}", flush=True)
+        # Persist to Postgres so it survives restarts
+        try:
+            from db.models import save_deploy
+            save_deploy(deploy)
+            print(f"[GITHUB] deploy saved to database", flush=True)
+        except Exception as e:
+            print(f"[GITHUB] failed to save deploy to db: {e}", flush=True)
+
+        # Feed into deploy correlator cache
+        try:
+            from agents import deploy_correlator
+            deploy_correlator.record_deploy(deploy)
+            print(f"[GITHUB] deploy added to correlator cache", flush=True)
+        except Exception as e:
+            print(f"[GITHUB] correlator import failed: {e}", flush=True)
 
     elif x_github_event == "ping":
         print(f"[GITHUB] ping received - webhook connected successfully!", flush=True)

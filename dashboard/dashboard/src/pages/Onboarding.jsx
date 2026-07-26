@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 
-const API = "http://localhost:8000";
+import api from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 const STEPS = [
   {
@@ -31,8 +32,7 @@ const STEPS = [
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const apiKey = localStorage.getItem("api_key") || "";
-  console.log("Onboarding.jsx: apiKey:", apiKey);
+  const { user } = useAuth();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
@@ -42,24 +42,36 @@ export default function Onboarding() {
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
 
-  async function connect() {
-    setLoading(true); setError("");
-    const payload = Object.fromEntries(
-      current.fields.map((f) => [f.key, form[`${current.id}_${f.key}`] || ""])
+async function connect() {
+  setLoading(true);
+  setError("");
+
+  const payload = Object.fromEntries(
+    current.fields.map((field) => [
+      field.key,
+      form[`${current.id}_${field.key}`] || "",
+    ])
+  );
+
+  try {
+    await api.post(
+      `/integrations/${current.id}`,
+      payload
     );
-    try {
-      const res = await fetch(`${API}/integrations/${current.id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.detail || "Connection failed"); return; }
-      setDone((prev) => new Set([...prev, current.id]));
-      next();
-    } catch { setError("Could not reach the server."); }
-    finally { setLoading(false); }
+
+    setDone((prev) => {
+      const next = new Set(prev);
+      next.add(current.id);
+      return next;
+    });
+
+    next();
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setLoading(false);
   }
+}
 
   function next() {
     if (isLast) navigate("/dashboard");

@@ -16,15 +16,18 @@ import secrets
 from datetime import datetime, timezone
 
 from db.connection import get_conn, put_conn
+from logger import log
 
 
-# ── Schema creation ──────────────────────────────────────────────────────────
+#Schemas
 
 CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS users (
     id          SERIAL PRIMARY KEY,
+    username    TEXT UNIQUE NOT NULL,
     email       TEXT UNIQUE NOT NULL,
     api_key     TEXT UNIQUE NOT NULL,
+    password_hash TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -53,6 +56,20 @@ CREATE TABLE IF NOT EXISTS incidents (
 
 CREATE INDEX IF NOT EXISTS idx_incidents_user_id ON incidents(user_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_timestamp ON incidents(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS deploys (
+    id          SERIAL PRIMARY KEY,
+    service     TEXT NOT NULL,
+    deploy_id   TEXT NOT NULL,
+    commit_message TEXT,
+    branch      TEXT,
+    source      TEXT,
+    timestamp   TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deploys_timestamp ON deploys(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_deploys_service ON deploys(service);
 """
 
 
@@ -69,60 +86,239 @@ def init_db():
 
 # ── User functions ────────────────────────────────────────────────────────────
 
-def create_user(email: str) -> dict:
+def create_user(username: str, email: str, password_hash: str) -> dict:
     api_key = secrets.token_urlsafe(32)
+
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (email, api_key) VALUES (%s, %s) "
-                "RETURNING id, email, api_key, created_at",
-                (email, api_key)
-            )
+        """
+        INSERT INTO users
+            (username, email, api_key, password_hash)
+        VALUES
+            (%s, %s, %s, %s)
+        RETURNING
+            id,
+            username,
+            email,
+            api_key,
+            password_hash,
+            created_at
+        """,
+        (
+            username,
+            email,
+            api_key,
+            password_hash,
+        ),
+    )
+
             row = cur.fetchone()
-            conn.commit()  # commit BEFORE put_conn
-        return {"id": row[0], "email": row[1], "api_key": row[2], "created_at": row[3]}
+            conn.commit()
+
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "api_key": row[3],
+            "password_hash": row[4],
+            "created_at": row[5],
+        }
+
     except Exception:
-        conn.rollback()  # rollback on error
+        conn.rollback()
         raise
+
     finally:
         put_conn(conn)
 
+
+def regenerate_api_key(user_id: int) -> str:
+    """
+    Generate a brand-new API key.
+
+    Useful if a user accidentally exposes it.
+    """
+
+    new_key = secrets.token_urlsafe(32)
+
+    conn = get_conn()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET api_key=%s
+                WHERE id=%s
+                """,
+                (
+                    new_key,
+                    user_id,
+                ),
+            )
+
+            conn.commit()
+
+        return new_key
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        put_conn(conn)
 
 def get_user_by_api_key(api_key: str) -> dict | None:
-    """Look up a user by their API key. Returns None if not found."""
     conn = get_conn()
+
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, email, api_key, created_at FROM users WHERE api_key = %s",
-                (api_key,)
+                """
+                SELECT id, username, email, api_key, created_at
+                FROM users
+                WHERE api_key = %s
+                """,
+                (api_key,),
             )
+
             row = cur.fetchone()
+
         if not row:
             return None
-        return {"id": row[0], "email": row[1], "api_key": row[2], "created_at": row[3]}
+
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "api_key": row[3],
+            "created_at": row[4],
+        }
+
+    finally:
+        put_conn(conn)
+def get_user_by_email(email: str):
+    """
+    Fetch a user by email.
+
+    Returns:
+        dict | None
+    """
+
+    conn = get_conn()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    username,
+                    email,
+                    password_hash,
+                    api_key,
+                    created_at
+                FROM users
+                WHERE email = %s
+                """,
+                (email,),
+            )
+
+            row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "password_hash": row[3],
+            "api_key": row[4],
+            "created_at": row[5],
+        }
+
+    finally:
+        put_conn(conn)
+
+        
+def get_user_by_username(username: str) -> dict | None:
+    conn = get_conn()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, username,api_key, email, created_at
+                FROM users
+                WHERE username = %s
+                """,
+                (username,),
+            )
+
+            row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "api_key":row[3],
+            "created_at": row[4],
+        }
+
+    finally:
+        put_conn(conn)
+
+        
+def get_user_by_id(user_id: int) -> dict | None:
+    """
+    Fetch a user by primary key.
+
+    Used by JWT authentication.
+    """
+
+    conn = get_conn()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    username,
+                    email,
+                    api_key,
+                    password_hash,
+                    created_at
+                FROM users
+                WHERE id = %s
+                """,
+                (user_id,),
+            )
+
+            row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "api_key": row[3],
+            "password_hash": row[4],
+            "created_at": row[5],
+        }
+
     finally:
         put_conn(conn)
 
 
-def get_user_by_email(email: str) -> dict | None:
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, email, api_key, created_at FROM users WHERE email = %s",
-                (email,)
-            )
-            row = cur.fetchone()
-        if not row:
-            return None
-        return {"id": row[0], "email": row[1], "api_key": row[2], "created_at": row[3]}
-    finally:
-        put_conn(conn)
-
-
-# ── Integration functions ────────────────────────────────────────────────────
 
 def upsert_integration(user_id: int, integration_type: str, config: dict) -> dict:
     conn = get_conn()
@@ -170,18 +366,33 @@ def get_all_users_with_integration(integration_type: str) -> list:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT u.id, u.email, i.config
-                FROM users u
-                JOIN integrations i ON i.user_id = u.id
-                WHERE i.type = %s AND i.enabled = TRUE
-            """, (integration_type,))
+        SELECT
+            u.id,
+            u.username,
+            u.email,
+            i.config
+        FROM users u
+        JOIN integrations i
+            ON i.user_id = u.id
+        WHERE
+            i.type = %s
+            AND i.enabled = TRUE
+    """, (integration_type,))
             rows = cur.fetchall()
-        return [{"user_id": r[0], "email": r[1], "config": r[2]} for r in rows]
+        return [
+    {
+        "user_id": r[0],
+        "username": r[1],
+        "email": r[2],
+        "config": r[3],
+    }
+    for r in rows
+]
     finally:
         put_conn(conn)
 
 
-# ── Incident functions ───────────────────────────────────────────────────────
+#Incident functions 
 
 def save_incident(user_id: int, diagnosis_event: dict) -> int:
     conn = get_conn()
@@ -230,6 +441,61 @@ def get_incidents(user_id: int, limit: int = 20) -> list:
             "trace_id": r[0], "service": r[1],
             "timestamp": r[2].isoformat(), "latency_ms": r[3],
             "final_diagnosis": r[4], "disagreement_score": r[5],
+        } for r in rows]
+    finally:
+        put_conn(conn)
+
+
+def save_deploy(deploy_event: dict) -> None:
+    """Persist a deploy event so it survives orchestrator restarts."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO deploys
+                  (service, deploy_id, commit_message, branch, source, timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                deploy_event.get("service", "unknown"),
+                deploy_event.get("deploy_id", ""),
+                deploy_event.get("commit_message", ""),
+                deploy_event.get("branch", ""),
+                deploy_event.get("source", "github"),
+                deploy_event.get("timestamp"),
+            ))
+    except Exception as e:
+        log(
+            "error",
+            "failed to save deploy",
+            error=str(e),
+        )
+    finally:
+        put_conn(conn)
+
+
+def get_recent_deploys(minutes: int = 60) -> list:
+    """
+    Load deploys from the last N minutes.
+    Called on startup to repopulate the correlator cache.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT service, deploy_id, commit_message, branch, source, timestamp
+                FROM deploys
+                WHERE timestamp > NOW() - (%s * INTERVAL '1 minute')
+                ORDER BY timestamp DESC
+                LIMIT 100
+            """, (minutes,))
+            rows = cur.fetchall()
+        return [{
+            "service": r[0],
+            "deploy_id": r[1],
+            "commit_message": r[2],
+            "branch": r[3],
+            "source": r[4],
+            "timestamp": r[5].isoformat(),
         } for r in rows]
     finally:
         put_conn(conn)

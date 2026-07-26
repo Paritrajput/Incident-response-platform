@@ -1,16 +1,14 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-
 import Navbar from "../components/Navbar";
-import { notify } from "../utils/notify.js";
 import { useAuth } from "../context/AuthContext";
+import { notify } from "../utils/notify";
 
-export default function Signup() {
+export default function Login() {
   const navigate = useNavigate();
-  const { signup } = useAuth();
+  const { login } = useAuth();
 
   const [form, setForm] = useState({
-    username: "",
     email: "",
     password: "",
   });
@@ -25,35 +23,25 @@ export default function Signup() {
   };
 
   const validate = () => {
-    if (!form.username.trim()) {
-      notify.error("Username is required.");
-      return false;
-    }
-
-    if (form.username.length < 3) {
-      notify.error("Username must be at least 3 characters.");
-      return false;
-    }
-
     if (!form.email.trim()) {
       notify.error("Email is required.");
       return false;
     }
 
     if (!/\S+@\S+\.\S+/.test(form.email)) {
-      notify.error("Enter a valid email address.");
+      notify.error("Please enter a valid email address.");
       return false;
     }
 
-    if (form.password.length < 8) {
-      notify.error("Password must be at least 8 characters.");
+    if (!form.password) {
+      notify.error("Password is required.");
       return false;
     }
 
     return true;
   };
 
-  const handleSignup = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
 
     if (!validate()) return;
@@ -61,32 +49,23 @@ export default function Signup() {
     setLoading(true);
 
     try {
-        await signup(
-            form.username,
-            form.email,
-            form.password
-        );
+      const data = await login(form.email, form.password);
+    
 
-        notify.success(
-            "Account created successfully! Please sign in."
-        );
+      notify.success(`Welcome back, ${data.username}!`);
 
-        navigate("/login", {
-            replace: true,
-        });
-
+      navigate("/dashboard", {
+        replace: true,
+      });
     } catch (err) {
-        notify.error(err.message);
+      notify.error(err.message);
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
-};
+  };
 
   return (
-    <div
-      className="min-h-screen " 
-      style={{ background: "var(--bg-base)" }}
-    >
+    <div className="min-h-screen" style={{ background: "var(--bg-base)" }}>
       <Navbar showLinks={false} />
 
       <div className="flex min-h-[calc(100vh-60px)] items-center justify-center px-6 py-10">
@@ -102,40 +81,18 @@ export default function Signup() {
               className="text-2xl font-bold"
               style={{ color: "var(--text-primary)" }}
             >
-              Create your account
+              Welcome Back
             </h1>
 
             <p
               className="mt-2 text-sm"
               style={{ color: "var(--text-secondary)" }}
             >
-              Start monitoring your systems in minutes.
+              Sign in to continue to your dashboard.
             </p>
           </div>
 
-          <form
-            onSubmit={handleSignup}
-            className="space-y-5"
-          >
-            <div>
-              <label
-                className="mb-2 block text-sm font-medium"
-                style={{ color: "var(--text-primary)" }}
-              >
-                Username
-              </label>
-
-              <input
-                type="text"
-                name="username"
-                value={form.username}
-                onChange={handleChange}
-                placeholder="johndoe"
-                required
-                className="input w-full"
-              />
-            </div>
-
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label
                 className="mb-2 block text-sm font-medium"
@@ -150,8 +107,8 @@ export default function Signup() {
                 value={form.email}
                 onChange={handleChange}
                 placeholder="you@example.com"
-                required
                 className="input w-full"
+                required
               />
             </div>
 
@@ -168,10 +125,9 @@ export default function Signup() {
                 name="password"
                 value={form.password}
                 onChange={handleChange}
-                placeholder="Minimum 8 characters"
-                required
-                minLength={8}
+                placeholder="Enter your password"
                 className="input w-full"
+                required
               />
             </div>
 
@@ -180,7 +136,7 @@ export default function Signup() {
               disabled={loading}
               className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Creating Account..." : "Create Account"}
+              {loading ? "Signing In..." : "Sign In"}
             </button>
           </form>
 
@@ -188,17 +144,14 @@ export default function Signup() {
             className="mt-8 border-t pt-5 text-center"
             style={{ borderColor: "var(--border)" }}
           >
-            <p
-              className="text-sm"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Already have an account?{" "}
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              Don't have an account?{" "}
               <Link
-                to="/login"
-                className="font-semibold hover:underline"
+                to="/signup"
+                className="font-semibold transition-colors hover:underline"
                 style={{ color: "var(--accent)" }}
               >
-                Sign In
+                Create one
               </Link>
             </p>
           </div>

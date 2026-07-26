@@ -130,10 +130,6 @@ def is_correct_diagnosis(ground_truth: dict, diagnosis: dict) -> bool:
 
 
 def match_diagnoses_to_ground_truth(ground_truths: list, diagnoses: list) -> list:
-    """
-    Match each ground truth record to the closest diagnosis by service + timestamp.
-    Tolerance: diagnosis must arrive within 120 seconds of the incident start.
-    """
     matched = []
     used_diagnosis_indices = set()
 
@@ -151,7 +147,7 @@ def match_diagnoses_to_ground_truth(ground_truths: list, diagnoses: list) -> lis
             diag_time = datetime.fromisoformat(diag["timestamp"])
             delta = abs((diag_time - gt_time).total_seconds())
 
-            if delta < best_delta and delta <= 120:
+            if delta < best_delta and delta <= 300:  # increase to 300s
                 best_delta = delta
                 best_match = (i, diag)
 

@@ -1,169 +1,353 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import IncidentCard from "../components/IncidentCard.jsx";
-import StatsBar from "../components/StatsBar.jsx";
-import { useTheme } from "../context/ThemeContext.jsx";
 
-const WS_URL = `ws://localhost:8000/ws`;
-const API = "http://localhost:8000";
+import Navbar from "../components/Navbar";
+import IncidentCard from "../components/IncidentCard";
+import StatsBar from "../components/StatsBar";
+
+import api from "../services/api";
+import { useAuth } from "../context/AuthContext";
+
+const WS_URL =
+  import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws";
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { theme, toggle } = useTheme();
+
+  const { user, logout } = useAuth();
+
+  const wsRef = useRef(null);
+  const reconnectTimeout = useRef(null);
+
   const [incidents, setIncidents] = useState([]);
   const [connected, setConnected] = useState(false);
-  const wsRef = useRef(null);
-  const email = localStorage.getItem("email") || "";
+  const [health, setHealth] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    connect();
-    loadHistory();
-    return () => wsRef.current?.close();
+  /**
+   * ----------------------------
+   * Health Check
+   * ----------------------------
+   */
+
+  const checkHealth = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/health`
+      );
+
+      const data = await res.json();
+
+      setHealth(data);
+    } catch {
+      setHealth({
+        status: "error",
+      });
+    }
   }, []);
 
-  function connect() {
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => { setConnected(false); setTimeout(connect, 3000); };
-    ws.onmessage = (e) => {
-      const d = JSON.parse(e.data);
-      setIncidents((prev) => [d, ...prev].slice(0, 50));
-    };
-  }
+  /**
+   * ----------------------------
+   * Load Incident History
+   * ----------------------------
+   */
 
-async function loadHistory() {
-    const key = localStorage.getItem("api_key");
-    if (!key) return;
+  const loadHistory = useCallback(async () => {
     try {
-        const res = await fetch(`${API}/incidents/`, {
-            headers: { "Authorization": `Bearer ${key}` },
-        });
-        if (res.ok) {
-            const data = await res.json();
-            setIncidents((prev) =>
-                prev.length === 0 ? [...data.incidents].reverse() : prev
-            );
-        }
-    } catch (_) {}
-}
+      setLoading(true);
 
-  function logout() {
-    localStorage.clear();
-    navigate("/");
-  }
+      const data = await api.get("/incidents");
+
+      setIncidents(
+        [...(data.incidents || [])].reverse()
+      );
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /**
+   * ----------------------------
+   * WebSocket
+   * ----------------------------
+   */
+
+  const connect = useCallback(() => {
+    if (
+      wsRef.current &&
+      wsRef.current.readyState === WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    const ws = new WebSocket(WS_URL);
+
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnected(true);
+    };
+
+    ws.onmessage = (event) => {
+      const incident = JSON.parse(event.data);
+
+      setIncidents((prev) => {
+        const exists = prev.some(
+          (item) => item.trace_id === incident.trace_id
+        );
+
+        if (exists) return prev;
+
+        return [incident, ...prev].slice(0, 50);
+      });
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+
+      reconnectTimeout.current = setTimeout(() => {
+        connect();
+      }, 3000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+  }, []);
+
+  /**
+   * ----------------------------
+   * Initial Load
+   * ----------------------------
+   */
+
+  useEffect(() => {
+    loadHistory();
+
+    checkHealth();
+
+    const interval = setInterval(
+      checkHealth,
+      30000
+    );
+
+    connect();
+
+    return () => {
+      clearInterval(interval);
+
+      clearTimeout(reconnectTimeout.current);
+
+      wsRef.current?.close();
+    };
+  }, [checkHealth, connect, loadHistory]);
+
+  /**
+   * ----------------------------
+   * Logout
+   * ----------------------------
+   */
+
+  const handleLogout = async () => {
+    await logout();
+
+    navigate("/", {
+      replace: true,
+    });
+  };
 
   return (
-    <div style={{ background: "var(--bg-base)", minHeight: "100vh" }}>
+    <div className="min-h-screen bg-[var(--bg-base)]">
 
-      {/* Nav */}
-      <nav style={{
-        position: "sticky", top: 0, zIndex: 100,
-        background: "var(--bg-base)", borderBottom: "1px solid var(--border)",
-      }}>
-        <div style={{
-          maxWidth: 1100, margin: "0 auto", padding: "0 24px",
-          height: 60, display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 28, height: 28, background: "var(--accent)",
-              borderRadius: 8, display: "flex", alignItems: "center",
-              justifyContent: "center", fontSize: 14,
-            }}>⚡</div>
-            <span style={{ fontWeight: 700, fontSize: 16, color: "var(--text-primary)" }}>IncidentAI</span>
+      {/* Navbar */}
+
+      <Navbar showLinks={false} />
+
+      {/* Main Content */}
+
+      <div className="mx-auto max-w-7xl px-6 py-8">
+
+        {/* Header */}
+
+        <div className="mb-8 flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
+
+          <div>
+
+            <h1 className="text-3xl font-bold text-[var(--text-primary)]">
+              Incident Feed
+            </h1>
+
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+              Live AI agent reasoning and incident timeline.
+            </p>
+
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* Live indicator */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "5px 12px", borderRadius: 20,
-              background: "var(--bg-subtle)", border: "1px solid var(--border)",
-            }}>
-              <div style={{
-                width: 7, height: 7, borderRadius: "50%",
-                background: connected ? "var(--success)" : "var(--danger)",
-                boxShadow: connected ? "0 0 0 3px #22c55e20" : "none",
-              }} />
-              <span style={{ fontSize: 12, color: connected ? "var(--success)" : "var(--danger)", fontWeight: 500 }}>
-                {connected ? "Live" : "Reconnecting"}
-              </span>
+          {/* Status Cards */}
+
+          <div className="flex flex-wrap gap-3">
+
+            {/* Live */}
+
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
+
+              <div
+                className={`h-3 w-3 rounded-full ${
+                  connected
+                    ? "bg-green-500"
+                    : "bg-red-500"
+                }`}
+              />
+
+              <div>
+
+                <p className="text-xs text-[var(--text-secondary)]">
+                  WebSocket
+                </p>
+
+                <p
+                  className={`text-sm font-semibold ${
+                    connected
+                      ? "text-green-500"
+                      : "text-red-500"
+                  }`}
+                >
+                  {connected
+                    ? "Connected"
+                    : "Disconnected"}
+                </p>
+
+              </div>
+
             </div>
 
-            <button
-              onClick={() => navigate("/onboarding")}
-              className="btn-secondary"
-              style={{ fontSize: 13, padding: "6px 14px" }}
-            >
-              ⚙ Integrations
-            </button>
+            {/* Backend */}
 
-            <button onClick={toggle} style={{
-              background: "var(--bg-subtle)", border: "1px solid var(--border)",
-              borderRadius: 8, width: 34, height: 34, cursor: "pointer",
-              fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              {theme === "dark" ? "☀️" : "🌙"}
-            </button>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
 
-            {email && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{
-                  width: 30, height: 30, borderRadius: "50%",
-                  background: "var(--accent-subtle)", border: "1px solid var(--accent-border)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 13, fontWeight: 600, color: "var(--accent)",
-                }}>
-                  {email[0].toUpperCase()}
-                </div>
-                <button onClick={logout} style={{
-                  background: "none", border: "none", color: "var(--text-muted)",
-                  fontSize: 13, cursor: "pointer",
-                }}>Sign out</button>
-              </div>
-            )}
+              <p className="text-xs text-[var(--text-secondary)]">
+                Backend
+              </p>
+
+              <p
+                className={`text-sm font-semibold ${
+                  health?.status === "ok"
+                    ? "text-green-500"
+                    : "text-yellow-500"
+                }`}
+              >
+                {health?.status === "ok"
+                  ? "Operational"
+                  : "Checking..."}
+              </p>
+
+            </div>
+
+            {/* User */}
+
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
+
+              <p className="text-xs text-[var(--text-secondary)]">
+                Logged in as
+              </p>
+
+              <p className="max-w-56 truncate text-sm font-semibold text-[var(--text-primary)]">
+                {user?.email}
+              </p>
+
+            </div>
+
           </div>
-        </div>
-      </nav>
 
-      {/* Content */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
-        <div style={{ marginBottom: 24 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
-            Incident Feed
-          </h1>
-          <p style={{ fontSize: 14, color: "var(--text-secondary)" }}>
-            Live agent reasoning traces — newest first
-          </p>
         </div>
+
+        {/* Stats */}
 
         <StatsBar incidents={incidents} />
 
-        <div style={{ marginTop: 20 }}>
-          {incidents.length === 0 ? (
-            <div className="card" style={{ textAlign: "center", padding: "64px 24px" }}>
-              <div style={{ fontSize: 40, marginBottom: 14 }}>⏳</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
-                No incidents yet
-              </div>
-              <div style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 24 }}>
-                Make sure the simulator and detector are running,<br />
-                or connect Prometheus to monitor real services.
-              </div>
-              <button
-                onClick={() => navigate("/onboarding")}
-                className="btn-primary"
-                style={{ fontSize: 14, padding: "10px 22px" }}
-              >
-                Connect integrations →
-              </button>
+        {/* Remaining content (Incident List / Empty State)
+            goes in Part 2 */}
+        {/* Content */}
+
+        <div className="mt-8">
+
+          {loading ? (
+
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] py-20">
+
+              <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-[var(--border)] border-t-[var(--accent)]" />
+
+              <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+                Loading incidents...
+              </h2>
+
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                Fetching incident history from the server.
+              </p>
+
             </div>
+
+          ) : incidents.length === 0 ? (
+
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] p-16 text-center">
+
+              <div className="mb-6 text-6xl">
+                🚨
+              </div>
+
+              <h2 className="text-2xl font-bold text-[var(--text-primary)]">
+                No incidents detected
+              </h2>
+
+              <p className="mx-auto mt-4 max-w-xl text-[15px] leading-7 text-[var(--text-secondary)]">
+                Your monitoring pipeline is connected but no incidents
+                have been generated yet. Connect your services or start
+                the simulator to begin receiving live AI incident analysis.
+              </p>
+
+              <div className="mt-8 flex justify-center gap-4">
+
+                <button
+                  onClick={() => navigate("/onboarding")}
+                  className="btn-primary"
+                >
+                  Connect Integrations
+                </button>
+
+                <button
+                  onClick={loadHistory}
+                  className="btn-secondary"
+                >
+                  Refresh
+                </button>
+
+              </div>
+
+            </div>
+
           ) : (
-            incidents.map((i) => <IncidentCard key={i.trace_id} incident={i} />)
+
+            <div className="space-y-5">
+
+              {incidents.map((incident) => (
+
+                <IncidentCard
+                  key={incident.trace_id}
+                  incident={incident}
+                />
+
+              ))}
+
+            </div>
+
           )}
+
         </div>
+
       </div>
+
     </div>
   );
 }
