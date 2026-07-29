@@ -33,7 +33,10 @@ from consumer import consume_loop, recent_diagnoses, _kafka_consumer_thread
 from websocket_manager import manager
 from logger import log
 from db.connection import init_pool, close_pool
-from db.models import init_db, get_all_users_with_integration
+from db.models import (
+    init_db,
+    get_all_applications_with_integration,
+)
 from integrations.prometheus import run_poller
 from routers import auth, integrations, incidents
 from integrations.github import router as github_router
@@ -42,6 +45,7 @@ import integrations.github as _gh
 from db.models import get_recent_deploys
 from agents import deploy_correlator as dc
 from config import FRONTEND_URLS
+from routers import applications
 
 # log(
 #     "info",
@@ -88,14 +92,25 @@ async def lifespan(app: FastAPI):
     consume_task = asyncio.create_task(consume_loop(producer))
 
     # Start one Prometheus poller per user that has it configured.
-    prometheus_users = get_all_users_with_integration("prometheus")
+    prometheus_apps = get_all_applications_with_integration("prometheus")
     poller_tasks = []
-    for user in prometheus_users:
+
+    for app in prometheus_apps:
         task = asyncio.create_task(
-            run_poller(user["user_id"], user["config"], producer)
+            run_poller(
+                application_id=app["application_id"],
+                user_id=app["user_id"],
+                config=app["config"],
+                producer=producer,
+            )
         )
         poller_tasks.append(task)
-    log("info", "prometheus pollers started", count=len(poller_tasks))
+
+    log(
+        "info",
+        "prometheus pollers started",
+        count=len(poller_tasks),
+    )
 
     log("info", "orchestrator ready")
     yield
@@ -133,6 +148,7 @@ app.include_router(auth.router)
 app.include_router(integrations.router)
 app.include_router(incidents.router)
 app.include_router(github_router)
+app.include_router(applications.router)
 
 
 @app.get("/health")
@@ -176,10 +192,9 @@ async def health():
     # Check Prometheus (for each user who has it configured)
     try:
         import httpx
-        from db.models import get_all_users_with_integration
-        prometheus_users = get_all_users_with_integration("prometheus")
-        if prometheus_users:
-            url = prometheus_users[0]["config"].get("prometheus_url", "")
+        prometheus_apps = get_all_applications_with_integration("prometheus")
+        if prometheus_apps:
+            url = prometheus_apps[0]["config"].get("prometheus_url", "")
             async with httpx.AsyncClient(timeout=3) as client:
                 resp = await client.get(f"{url}/-/healthy")
                 status["components"]["prometheus"] = {
@@ -225,5 +240,9 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             await websocket.receive()
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
         log("info", "dashboard client disconnected")
+    except RuntimeError:
+        # A browser can disconnect while a broadcast is being written.
+        log("info", "dashboard client connection closed")
+    finally:
+        manager.disconnect(websocket)

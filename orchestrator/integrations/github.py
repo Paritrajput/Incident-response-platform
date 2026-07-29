@@ -1,26 +1,104 @@
+"""
+integrations/github.py
+
+GitHub webhook receiver.
+
+Responsibilities
+----------------
+1. Receive GitHub webhook events.
+2. Verify webhook signature.
+3. Identify which application owns the webhook.
+4. Convert GitHub Push events into Deploy events.
+5. Persist deploys.
+6. Feed the deploy correlator.
+"""
+
 import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Request, Header
+from fastapi import APIRouter, Header, HTTPException, Request
+
+from agents import deploy_correlator
+from db import models
 
 router = APIRouter()
 
+# -------------------------------------------------------------------
+# In-memory deploy cache (survives only until restart)
+# -------------------------------------------------------------------
 
-def verify_signature(payload_bytes: bytes, signature: str, secret: str) -> bool:
-    if not signature or not signature.startswith("sha256="):
+recent_github_deploys = []
+
+
+# -------------------------------------------------------------------
+# Signature Verification
+# -------------------------------------------------------------------
+
+def verify_signature(
+    payload_bytes: bytes,
+    signature: str,
+    secret: str,
+) -> bool:
+
+    if not signature:
         return False
-    expected = "sha256=" + hmac.new(
-        secret.encode(), payload_bytes, hashlib.sha256
-    ).hexdigest()
+
+    if not signature.startswith("sha256="):
+        return False
+
+    expected = (
+        "sha256="
+        + hmac.new(
+            secret.encode(),
+            payload_bytes,
+            hashlib.sha256,
+        ).hexdigest()
+    )
+
     return hmac.compare_digest(expected, signature)
 
 
-# Store deploys in memory directly here - no import needed
-recent_github_deploys = []
+# -------------------------------------------------------------------
+# Find which application sent this webhook
+# -------------------------------------------------------------------
 
+def identify_application(
+    payload_bytes: bytes,
+    signature: str,
+):
+    """
+    Iterate over every GitHub integration until
+    a webhook secret matches.
+    """
+
+    applications = models.get_all_applications_with_integration(
+        "github"
+    )
+
+    for app in applications:
+
+        config = app.get("config", {})
+        secret = config.get("webhook_secret")
+
+        if not secret:
+            continue
+
+        if verify_signature(
+            payload_bytes,
+            signature,
+            secret,
+        ):
+            return app
+
+    return None
+
+
+# -------------------------------------------------------------------
+# Webhook
+# -------------------------------------------------------------------
 
 @router.post("/webhooks/github")
 async def github_webhook(
@@ -28,54 +106,172 @@ async def github_webhook(
     x_hub_signature_256: Optional[str] = Header(None),
     x_github_event: Optional[str] = Header(None),
 ):
+
     payload_bytes = await request.body()
 
-    # Write directly to stdout - bypasses logger module entirely
-    print(f"[GITHUB] webhook received event={x_github_event} size={len(payload_bytes)}", flush=True)
+    print(
+        f"[GITHUB] webhook received "
+        f"event={x_github_event}",
+        flush=True,
+    )
+
+    # -------------------------------------------------------------
+    # Identify application
+    # -------------------------------------------------------------
+
+    application = identify_application(
+        payload_bytes,
+        x_hub_signature_256,
+    )
+
+    if application is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid webhook signature",
+        )
+
+    application_id = application["application_id"]
 
     try:
         payload = json.loads(payload_bytes)
-    except Exception as e:
-        print(f"[GITHUB] failed to parse payload: {e}", flush=True)
-        return {"status": "parse_error"}
 
-    if x_github_event == "push":
-        commits = payload.get("commits", [])
-        repo = payload.get("repository", {}).get("full_name", "unknown")
-        ref = payload.get("ref", "")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON payload",
+        )
 
-        print(f"[GITHUB] push event repo={repo} ref={ref} commits={len(commits)}", flush=True)
+    # -------------------------------------------------------------
+    # Ping Event
+    # -------------------------------------------------------------
 
-    if commits:
-        latest = commits[-1]
-        deploy = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "service": repo.split("/")[-1],
-            "deploy_id": latest.get("id", "")[:8],
-            "commit_message": latest.get("message", ""),
-            "branch": ref.replace("refs/heads/", ""),
-            "source": "github",
+    if x_github_event == "ping":
+
+        print(
+            f"[GITHUB] Ping received "
+            f"(application={application_id})",
+            flush=True,
+        )
+
+        return {
+            "status": "connected",
+            "application_id": application_id,
         }
-        recent_github_deploys.append(deploy)
-        print(f"[GITHUB] deploy recorded: {deploy}", flush=True)
 
-        # Persist to Postgres so it survives restarts
-        try:
-            from db.models import save_deploy
-            save_deploy(deploy)
-            print(f"[GITHUB] deploy saved to database", flush=True)
-        except Exception as e:
-            print(f"[GITHUB] failed to save deploy to db: {e}", flush=True)
+    # -------------------------------------------------------------
+    # Ignore unsupported events
+    # -------------------------------------------------------------
 
-        # Feed into deploy correlator cache
-        try:
-            from agents import deploy_correlator
-            deploy_correlator.record_deploy(deploy)
-            print(f"[GITHUB] deploy added to correlator cache", flush=True)
-        except Exception as e:
-            print(f"[GITHUB] correlator import failed: {e}", flush=True)
+    if x_github_event != "push":
 
-    elif x_github_event == "ping":
-        print(f"[GITHUB] ping received - webhook connected successfully!", flush=True)
+        return {
+            "status": "ignored",
+            "event": x_github_event,
+        }
 
-    return {"status": "received"}
+    # -------------------------------------------------------------
+    # Push Event
+    # -------------------------------------------------------------
+
+    commits = payload.get("commits", [])
+
+    if not commits:
+
+        return {
+            "status": "no_commits",
+        }
+
+    repository = payload.get(
+        "repository",
+        {},
+    ).get(
+        "full_name",
+        "unknown",
+    )
+
+    ref = payload.get(
+        "ref",
+        "",
+    )
+
+    config = application.get("config", {})
+
+    service_name = (
+        config.get("repo_to_service", {})
+        .get(
+            repository,
+            repository.split("/")[-1],
+        )
+    )
+
+    latest_commit = commits[-1]
+
+    deploy = {
+        "application_id": application_id,
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "service": service_name,
+        "deploy_id": latest_commit.get(
+            "id",
+            "",
+        )[:8],
+        "commit_message": latest_commit.get(
+            "message",
+            "",
+        ),
+        "branch": ref.replace(
+            "refs/heads/",
+            "",
+        ),
+        "source": "github",
+    }
+
+    # -------------------------------------------------------------
+    # Cache
+    # -------------------------------------------------------------
+
+    recent_github_deploys.append(deploy)
+
+    # -------------------------------------------------------------
+    # Persist
+    # -------------------------------------------------------------
+
+    try:
+
+        models.save_deploy(deploy)
+
+    except Exception as e:
+
+        print(
+            f"[GITHUB] failed to save deploy: {e}",
+            flush=True,
+        )
+
+    # -------------------------------------------------------------
+    # Correlator
+    # -------------------------------------------------------------
+
+    try:
+
+        deploy_correlator.record_deploy(deploy)
+
+    except Exception as e:
+
+        print(
+            f"[GITHUB] correlator error: {e}",
+            flush=True,
+        )
+
+    print(
+        "[GITHUB] Deploy recorded "
+        f"(application={application_id}, "
+        f"service={service_name})",
+        flush=True,
+    )
+
+    return {
+        "status": "received",
+        "application_id": application_id,
+        "service": service_name,
+    }

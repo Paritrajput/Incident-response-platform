@@ -77,7 +77,7 @@ export default function IncidentCard({ incident }) {
         <div style={{ padding: "18px 18px 20px" }}>
           {/* Trace info */}
           <p style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-muted)", marginBottom: 16 }}>
-            trace: {incident.trace_id} · {new Date(incident.incident_timestamp).toLocaleTimeString()}
+            trace: {incident.trace_id} · {new Date(incident.incident_timestamp || incident.timestamp).toLocaleTimeString()}
           </p>
 
           {/* Final diagnosis */}

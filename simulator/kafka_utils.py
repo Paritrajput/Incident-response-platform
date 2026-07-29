@@ -6,8 +6,11 @@ we only update it here.
 
 import json
 from kafka import KafkaProducer
+# simulator/kafka_utils.py
+import os
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
 
-KAFKA_BROKER = "localhost:9092"
+# KAFKA_BROKER = "localhost:9092"
 
 TOPIC_LOGS = "logs"
 TOPIC_METRICS = "metrics"

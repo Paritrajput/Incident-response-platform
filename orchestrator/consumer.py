@@ -21,7 +21,11 @@ from logger import log
 from trace import set_trace_id, new_trace_id
 from websocket_manager import manager
 from integrations import slack as slack_integration
-from db.models import get_all_users_with_integration, save_incident
+from db.models import (
+    get_integration,
+    get_application,
+    save_incident,
+)
 
 TOPIC_INCIDENTS = "incidents"
 TOPIC_DIAGNOSES = "diagnoses"
@@ -90,55 +94,83 @@ async def _call_agent_with_retry(agent_fn, incident: dict) -> dict:
 
 
 async def _notify_slack(diagnosis_event: dict):
-    """Send Slack notification - deduplicated, max one message per incident."""
-    slack_users = get_all_users_with_integration("slack")
-    
-    if not slack_users:
-        log("warn", "no slack integration configured")
+    """
+    Send Slack notification only to the application's Slack integration.
+    """
+
+    application_id = diagnosis_event.get("application_id")
+
+    if not application_id:
         return
 
-    # Only notify the first configured user to avoid duplicates
-    # In multi-tenant: match by user_id from the incident source
-    user = slack_users[0]
-    config = user["config"]
-    
+    integration = get_integration(application_id, "slack")
+
+    if not integration or not integration.get("enabled"):
+        log(
+        "info",
+        "slack integration not configured",
+        application_id=application_id,
+    )
+        return
+
+    config = integration["config"]
+
     await slack_integration.send_diagnosis(
         bot_token=config.get("bot_token", ""),
         channel_id=config.get("channel_id", ""),
         diagnosis_event=diagnosis_event,
     )
 
-
 async def _save_to_db(diagnosis_event: dict):
-    """
-    Save incident to Postgres for all users.
-    In a real multi-tenant system, we'd know which user owns this
-    incident from the data source. For now, save for all users.
-    """
     try:
-        # Save for the first user (single-tenant for now).
-        # Multi-tenant: match incident source to user_id.
-        from db.models import get_conn, put_conn
-        conn = get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM users LIMIT 1")
-                row = cur.fetchone()
-            if row:
-                save_incident(row[0], diagnosis_event)
-        finally:
-            put_conn(conn)
-    except Exception as e:
-        log("error", "failed to save incident to db", error=str(e))
+        application_id = diagnosis_event.get("application_id")
+        print("application_id =", application_id, flush=True)
 
+        if not application_id:
+            print("No application_id", flush=True)
+            return
+
+        application = get_application(application_id)
+        print("application =", application, flush=True)
+
+        if application is None:
+            print("Application not found!", flush=True)
+            return
+
+        save_incident(
+            user_id=application["user_id"],
+            application_id=application_id,
+            diagnosis_event=diagnosis_event,
+        )
+
+        print("Incident saved!", flush=True)
+
+    except Exception as e:
+        print(e, flush=True)
+
+
+    except Exception as e:
+        log(
+            "error",
+            "failed to save incident",
+            application_id=diagnosis_event.get("application_id"),
+            error=str(e),
+        )
 
 async def process_incident(incident: dict, producer: KafkaProducer) -> None:
+
+    print("INCIDENT RECEIVED:", incident, flush=True)
+    
     trace_id = new_trace_id()
     set_trace_id(trace_id)
 
-    log("info", "processing incident",
+    log(
+        "info",
+        "processing incident",
+        application_id=incident.get("application_id"),
         service=incident["service"],
-        reason=incident.get("reason"))
+        reason=incident.get("reason"),  
+    )
 
     started_at = datetime.now(timezone.utc)
 
@@ -153,6 +185,7 @@ async def process_incident(incident: dict, producer: KafkaProducer) -> None:
 
     diagnosis_event = {
         "trace_id": trace_id,
+        "application_id": incident.get("application_id"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": incident["service"],
         "incident_timestamp": incident["timestamp"],
@@ -172,10 +205,14 @@ async def process_incident(incident: dict, producer: KafkaProducer) -> None:
         manager.broadcast(diagnosis_event),
     )
 
-    log("info", "diagnosis complete",
+    log(
+        "info",
+        "diagnosis complete",
+        application_id=incident.get("application_id"),
         service=incident["service"],
         latency_ms=latency_ms,
-        disagreement_score=resolution["disagreement_score"])
+        disagreement_score=resolution["disagreement_score"],
+    )
 
     recent_diagnoses.append(diagnosis_event)
     if len(recent_diagnoses) > MAX_RECENT:

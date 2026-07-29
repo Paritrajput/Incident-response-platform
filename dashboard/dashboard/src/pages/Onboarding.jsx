@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 
-import api from "../services/api";
-import { useAuth } from "../context/AuthContext";
+import { applicationsApi } from "../services/api";
+import { useApplications } from "../context/ApplicationContext";
 
 const STEPS = [
   {
@@ -32,12 +32,22 @@ const STEPS = [
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { selectedApplication } = useApplications();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(new Set());
+
+  useEffect(() => {
+    if (!selectedApplication) return;
+    applicationsApi.integrations(selectedApplication.id)
+      .then((integrations) => {
+        const configured = new Set(integrations.map((integration) => integration.type));
+        setDone(configured);
+      })
+      .catch(() => setDone(new Set()));
+  }, [selectedApplication?.id]);
 
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
@@ -54,10 +64,7 @@ async function connect() {
   );
 
   try {
-    await api.post(
-      `/integrations/${current.id}`,
-      payload
-    );
+    await applicationsApi.connectIntegration(selectedApplication.id, current.id, payload);
 
     setDone((prev) => {
       const next = new Set(prev);
@@ -78,6 +85,8 @@ async function connect() {
     else { setStep((s) => s + 1); setError(""); }
   }
 
+  if (!selectedApplication) return null;
+
   return (
     <div style={{ background: "var(--bg-base)", minHeight: "100vh" }}>
       <Navbar showLinks={false} />
@@ -89,7 +98,7 @@ async function connect() {
             Set up your integrations
           </h1>
           <p style={{ fontSize: 14, color: "var(--text-secondary)" }}>
-            Connect your tools so IncidentAI can monitor and notify you.
+            Connect tools for <strong>{selectedApplication.name}</strong> so IncidentAI can monitor and notify you.
           </p>
         </div>
 

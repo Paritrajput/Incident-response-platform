@@ -5,6 +5,7 @@ import { Toaster } from "react-hot-toast";
 import App from "./App.jsx";
 import "./index.css";
 import { AuthProvider } from "./context/AuthContext.jsx";
+import { ApplicationProvider } from "./context/ApplicationContext.jsx";
 
 // Set initial theme before render to avoid flash
 const saved = localStorage.getItem("theme") || "dark";
@@ -14,6 +15,7 @@ createRoot(document.getElementById("root")).render(
   <StrictMode>
     <ThemeProvider>
        <AuthProvider>
+        <ApplicationProvider>
         <Toaster
         position="top-right"
         reverseOrder={false}
@@ -47,6 +49,7 @@ createRoot(document.getElementById("root")).render(
       />
 
       <App />
+      </ApplicationProvider>
       </AuthProvider>
     </ThemeProvider>
   </StrictMode>

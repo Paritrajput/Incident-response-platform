@@ -5,6 +5,7 @@ import { CgProfile } from "react-icons/cg";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import ProfileModal from "./ui/ProfileModal";
+import { useApplications } from "../context/ApplicationContext";
 
 export default function Navbar({ showLinks = true }) {
   const navigate = useNavigate();
@@ -16,6 +17,7 @@ export default function Navbar({ showLinks = true }) {
     logout,
     isAuthenticated,
 } = useAuth();
+  const { applications, selectedApplication, setSelectedApplication, loadingApplications } = useApplications();
   const [showProfileModal, setShowProfileModal] = useState(false);
 
 
@@ -160,6 +162,32 @@ const handleLogout = async () => {
                 gap: 12,
               }}
             >
+              <select
+                aria-label="Selected application"
+                value={selectedApplication?.id ?? ""}
+                disabled={loadingApplications || applications.length === 0}
+                onChange={(event) => {
+                  const next = applications.find((app) => String(app.id) === event.target.value);
+                  setSelectedApplication(next || null);
+                  if (next) navigate("/dashboard");
+                }}
+                style={{
+                  maxWidth: 180, background: "var(--bg-subtle)", color: "var(--text-primary)",
+                  border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", fontSize: 13,
+                }}
+              >
+                <option value="">{loadingApplications ? "Loading..." : "Select application"}</option>
+                {applications.map((application) => <option key={application.id} value={application.id}>{application.name}</option>)}
+              </select>
+
+              <button
+                onClick={() => navigate("/applications")}
+                className="btn-secondary"
+                style={{ fontSize: 13, padding: "7px 12px" }}
+              >
+                Manage
+              </button>
+
               <button
                 onClick={() => navigate("/dashboard")}
                 className="btn-primary"

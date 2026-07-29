@@ -13,8 +13,11 @@ from typing import Optional
 from db import models
 # from routers.auth import get_current_user
 from auth.dependencies import get_current_user
+from fastapi import HTTPException
 
-router = APIRouter(prefix="/integrations", tags=["integrations"])
+router = APIRouter(
+    prefix=""
+)
 
 
 # ── Slack ────────────────────────────────────────────────────────────────────
@@ -24,10 +27,19 @@ class SlackConfig(BaseModel):
     channel_id: str      # C... from Slack channel details
 
 
-@router.post("/slack")
-async def connect_slack(config: SlackConfig, user=Depends(get_current_user)):
-    """Save Slack credentials for the current user."""
-    result = models.upsert_integration(user["id"], "slack", config.model_dump())
+@router.post("/applications/{application_id}/integrations/slack")
+async def connect_slack(application_id: int, config: SlackConfig, user=Depends(get_current_user)):
+    
+    """Save Slack credentials for the specified application."""
+    if not models.application_belongs_to_user(
+        application_id,
+        user["id"],
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
+    result = models.upsert_integration(application_id, "slack", config.model_dump())
     return {"status": "connected", "integration": result}
 
 
@@ -39,10 +51,18 @@ class PrometheusConfig(BaseModel):
     latency_query: Optional[str] = None
 
 
-@router.post("/prometheus")
-async def connect_prometheus(config: PrometheusConfig, user=Depends(get_current_user)):
+@router.post("/applications/{application_id}/integrations/prometheus")
+async def connect_prometheus(application_id: int, config: PrometheusConfig, user=Depends(get_current_user)):
     """Save Prometheus config. The poller picks it up on next cycle."""
-    result = models.upsert_integration(user["id"], "prometheus", config.model_dump())
+    if not models.application_belongs_to_user(
+        application_id,
+        user["id"],
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
+    result = models.upsert_integration(application_id, "prometheus", config.model_dump())
     return {"status": "connected", "integration": result}
 
 
@@ -53,8 +73,8 @@ class GitHubConfig(BaseModel):
     repo_to_service: Optional[dict] = {}    # {"my-org/my-repo": "payment-service"}
 
 
-@router.post("/github")
-async def connect_github(config: GitHubConfig, user=Depends(get_current_user)):
+@router.post("/applications/{application_id}/integrations/github")
+async def connect_github(application_id: int, config: GitHubConfig, user=Depends(get_current_user)):
     """
     Save GitHub webhook config.
     After calling this, set up the webhook in your GitHub repo:
@@ -62,7 +82,15 @@ async def connect_github(config: GitHubConfig, user=Depends(get_current_user)):
       URL: http://yourserver.com/webhooks/github
       Secret: (same as webhook_secret above)
     """
-    result = models.upsert_integration(user["id"], "github", config.model_dump())
+    if not models.application_belongs_to_user(
+        application_id,
+        user["id"],
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
+    result = models.upsert_integration(application_id, "github", config.model_dump())
     return {
         "status": "connected",
         "next_step": "Add webhook in GitHub: repo → Settings → Webhooks",
@@ -73,10 +101,18 @@ async def connect_github(config: GitHubConfig, user=Depends(get_current_user)):
 
 # ── List all integrations ────────────────────────────────────────────────────
 
-@router.get("/")
-async def list_integrations(user=Depends(get_current_user)):
+@router.get("/applications/{application_id}/integrations")
+async def list_integrations(application_id: int, user=Depends(get_current_user)):
     """Return all connected integrations for the current user."""
-    integrations = models.get_integrations(user["id"])
+    if not models.application_belongs_to_user(
+        application_id,
+        user["id"],
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
+    integrations = models.get_integrations(application_id)
     # Mask sensitive fields before returning.
     for i in integrations:
         if "bot_token" in i.get("config", {}):
@@ -86,16 +122,24 @@ async def list_integrations(user=Depends(get_current_user)):
     return {"integrations": integrations}
 
 
-@router.delete("/{integration_type}")
-async def disconnect(integration_type: str, user=Depends(get_current_user)):
+@router.delete("/applications/{application_id}/integrations/{integration_type}")
+async def disconnect(application_id: int, integration_type: str, user=Depends(get_current_user)):
     """Disable an integration without deleting its config."""
+    if not models.application_belongs_to_user(
+        application_id,
+        user["id"],
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
     conn = models.get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE integrations SET enabled = FALSE "
-                "WHERE user_id = %s AND type = %s",
-                (user["id"], integration_type)
+                "WHERE application_id = %s AND type = %s",
+                (application_id, integration_type)
             )
         conn.commit()
     finally:

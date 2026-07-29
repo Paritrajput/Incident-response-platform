@@ -43,19 +43,36 @@ def record_deploy(deploy_event: dict) -> None:
 
 def _find_related_deploys(incident: dict) -> list:
     """
-    Find deploys for the affected service that happened in the 5 minutes
-    before the incident. These are the ones worth investigating.
+    Find deploys for the same application and service
+    that happened within five minutes before the incident.
     """
-    incident_time = datetime.fromisoformat(incident["timestamp"])
+
+    incident_time = datetime.fromisoformat(
+        incident["timestamp"]
+    )
+
     related = []
 
     for deploy in recent_deploys:
+
+        # Must belong to the same application
+        if deploy.get("application_id") != incident.get("application_id"):
+            continue
+
+        # Must be the same service
         if deploy.get("service") != incident["service"]:
             continue
-        deploy_time = datetime.fromisoformat(deploy["timestamp"])
-        # How many seconds before the incident did this deploy happen?
-        seconds_before = (incident_time - deploy_time).total_seconds()
-        if 0 <= seconds_before <= 300:  # within 5 minutes before incident
+
+        deploy_time = datetime.fromisoformat(
+            deploy["timestamp"]
+        )
+
+        seconds_before = (
+            incident_time - deploy_time
+        ).total_seconds()
+
+        if 0 <= seconds_before <= 300:
+
             related.append({
                 "deploy_id": deploy["deploy_id"],
                 "commit_message": deploy["commit_message"],
@@ -98,12 +115,21 @@ is the likely cause. Respond with JSON in this exact format:
 
 
 async def run(incident: dict) -> dict:
-    log("info", "deploy_correlator started", service=incident["service"])
+    log(
+    "info",
+    "deploy_correlator started",
+    application_id=incident.get("application_id"),
+    service=incident["service"],
+)
 
     related_deploys = _find_related_deploys(incident)
-    log("info", "deploy_correlator found related deploys",
+    log(
+        "info",
+        "deploy_correlator found related deploys",
+        application_id=incident.get("application_id"),
         service=incident["service"],
-        count=len(related_deploys))
+        count=len(related_deploys),
+    )
 
     prompt = _build_prompt(incident, related_deploys)
 
@@ -131,9 +157,13 @@ async def run(incident: dict) -> dict:
             "recommended_action": "Manual review required",
         }
 
-    log("info", "deploy_correlator completed",
+    log(
+        "info",
+        "deploy_correlator completed",
+        application_id=incident.get("application_id"),
         service=incident["service"],
-        confidence=diagnosis.get("confidence"))
+        confidence=diagnosis.get("confidence"),
+    )
 
     return {
         "agent": "deploy_correlator",

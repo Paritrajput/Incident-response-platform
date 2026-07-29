@@ -7,3 +7,5 @@ python-dotenv==1.0.1
 psycopg2-binary==2.9.9
 httpx
 pydantic==2.7.0
+bcrypt
+python-jose[cryptography]

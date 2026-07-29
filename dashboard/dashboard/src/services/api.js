@@ -62,4 +62,18 @@ const api = {
 
 };
 
+export const applicationsApi = {
+    list: () => api.get("/applications/"),
+    create: (body) => api.post("/applications/", body),
+    update: (applicationId, body) => api.put(`/applications/${applicationId}`, body),
+    remove: (applicationId) => api.delete(`/applications/${applicationId}`),
+    integrations: (applicationId) => api.get(`/applications/${applicationId}/integrations`),
+    connectIntegration: (applicationId, type, body) =>
+        api.post(`/applications/${applicationId}/integrations/${type}`, body),
+    disconnectIntegration: (applicationId, type) =>
+        api.delete(`/applications/${applicationId}/integrations/${type}`),
+    incidents: (applicationId) => api.get(`/applications/${applicationId}/incidents`),
+    deploys: (applicationId) => api.get(`/applications/${applicationId}/deploys`),
+};
+
 export default api;

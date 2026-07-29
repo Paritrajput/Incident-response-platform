@@ -91,7 +91,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       AGENT_TIMEOUT_SECONDS: 90
       AGENT_MAX_RETRIES: 2
-      DATABASE_URL: postgresql://admin:${POSTGRES_PASSWORD:-localpassword}@postgres:5432/incidents
+      DATABASE_URL: ${DATABASE_URL}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
     depends_on:

@@ -76,19 +76,38 @@ async def poll_once(prometheus_url: str) -> list[dict]:
     return events
 
 
-async def run_poller(user_id: int, config: dict, producer):
+async def run_poller(
+    application_id: int,
+    user_id: int,
+    config: dict,
+    producer,
+):
     prometheus_url = config.get("prometheus_url", "").rstrip("/")
-    log("info", "prometheus poller started", user_id=user_id, url=prometheus_url)
+    log(
+    "info",
+    "prometheus poller started",
+    user_id=user_id,
+    application_id=application_id,
+    url=prometheus_url,
+)
 
     while True:
         try:
             events = await poll_once(prometheus_url)
             for event in events:
+                event["application_id"] = application_id
+                print("SENDING METRIC:", event, flush=True)
                 producer.send("metrics", value=json.dumps(event).encode())
             if events:
                 producer.flush()
-                log("info", "prometheus polled", user_id=user_id, services=len(events))
+                log(
+    "info",
+    "prometheus polled",
+    user_id=user_id,
+    application_id=application_id,
+    services=len(events),
+)
         except Exception as e:
-            log("error", "prometheus poll error", user_id=user_id, error=str(e))
+            log("error", "prometheus poll error", user_id=user_id, application_id=application_id, error=str(e))
 
         await asyncio.sleep(POLL_INTERVAL)

@@ -24,7 +24,9 @@ from kafka_utils import make_producer, KAFKA_BROKER, TOPIC_LOGS, TOPIC_METRICS, 
 
 WINDOW_SECONDS = 30   # wider window to catch Prometheus metrics (polls every 15s)
 SLIDE_SECONDS = 5
+# Prometheus reports error rates as percentages: 10 represents 10%.
 ERROR_RATE_THRESHOLD = 10
+
 
 metric_buffers = defaultdict(deque)
 log_buffers = defaultdict(deque)
@@ -47,22 +49,22 @@ def make_consumer():
     )
 
 
-def add_to_buffer(buffer, service, value):
-    buffer[service].append((now_ts(), value))
+def add_to_buffer(buffer, key, value):
+    buffer[key].append((now_ts(), value))
 
 
-def trim_old_entries(buffer, service):
+def trim_old_entries(buffer, key):
     cutoff = now_ts() - WINDOW_SECONDS
-    while buffer[service] and buffer[service][0][0] < cutoff:
-        buffer[service].popleft()
+    while buffer[key] and buffer[key][0][0] < cutoff:
+        buffer[key].popleft()
 
 
-def compute_window_stats(service):
-    trim_old_entries(metric_buffers, service)
-    trim_old_entries(log_buffers, service)
+def compute_window_stats(key):
+    trim_old_entries(metric_buffers, key)
+    trim_old_entries(log_buffers, key)
 
-    metrics = [v for _, v in metric_buffers[service]]
-    logs = [v for _, v in log_buffers[service]]
+    metrics = [v for _, v in metric_buffers[key]]
+    logs = [v for _, v in log_buffers[key]]
 
     if not metrics:
         return None
@@ -70,8 +72,10 @@ def compute_window_stats(service):
     avg_error_rate = sum(m["error_rate"] for m in metrics) / len(metrics)
     avg_latency_ms = sum(m["latency_ms"] for m in metrics) / len(metrics)
     error_log_count = sum(1 for l in logs if l.get("level") == "ERROR")
+    application_id = metrics[0]["application_id"]
 
     return {
+        "application_id": application_id,
         "avg_error_rate": round(avg_error_rate, 4),
         "avg_latency_ms": round(avg_latency_ms, 1),
         "error_log_count": error_log_count,
@@ -82,21 +86,24 @@ def compute_window_stats(service):
 
 
 def emit_incident(producer, service, stats):
+    print("STATS:", stats, flush=True)
     incident = {
+        "application_id": stats["application_id"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": service,
         "reason": "error_rate_threshold_breach",
         "threshold": ERROR_RATE_THRESHOLD,
         **stats,
     }
+    print("INCIDENT TO SEND:", incident, flush=True)
     producer.send(TOPIC_INCIDENTS, value=incident)
     print(f"[INCIDENT EMITTED] {service} -> error_rate={stats['avg_error_rate']}")
 
 
-def check_recovery(service, stats):
-    if service in open_incidents and stats["avg_error_rate"] < ERROR_RATE_THRESHOLD:
-        open_incidents.remove(service)
-        print(f"[RECOVERED] {service} back under threshold")
+def check_recovery(key, stats):
+    if key in open_incidents and stats["avg_error_rate"] < ERROR_RATE_THRESHOLD:
+        open_incidents.remove(key)
+        print(f"[RECOVERED] {key}")
 
 
 def evaluate_all_services(producer):
@@ -104,21 +111,27 @@ def evaluate_all_services(producer):
     if not all_services:
         return
 
-    for service in all_services:
-        stats = compute_window_stats(service)
+  
+    for key in all_services:
+
+        application_id, service = key
+
+        stats = compute_window_stats(key)
+
         if stats is None:
             continue
 
-        print(f"[WINDOW] {service}: error_rate={stats['avg_error_rate']:.3f} "
-              f"samples={stats['sample_count']} open={service in open_incidents}")
-
         if stats["avg_error_rate"] >= ERROR_RATE_THRESHOLD:
-            if service not in open_incidents:
-                emit_incident(producer, service, stats)
-                open_incidents.add(service)
-        else:
-            check_recovery(service, stats)
 
+            if key not in open_incidents:
+
+                emit_incident(producer, service, stats)
+
+                open_incidents.add(key)
+
+        else:
+
+            check_recovery(key, stats)
 
 def main():
     producer = make_producer()
@@ -135,14 +148,18 @@ def main():
         for topic_partition, messages in records.items():
             for message in messages:
                 value = message.value
+                application_id = value.get("application_id")
                 service = value.get("service")
+
+                key = (application_id, service)
                 if not service:
                     continue
 
                 if message.topic == TOPIC_METRICS:
-                    add_to_buffer(metric_buffers, service, value)
+                    print("METRIC RECEIVED:", value, flush=True)
+                    add_to_buffer(metric_buffers, key, value)
                 elif message.topic == TOPIC_LOGS:
-                    add_to_buffer(log_buffers, service, value)
+                    add_to_buffer(log_buffers, key, value)
 
         # Always evaluate every SLIDE_SECONDS regardless of message arrival
         if now_ts() - last_eval >= SLIDE_SECONDS:
